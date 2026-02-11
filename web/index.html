@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/htmx.org/dist/ext/ws.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Delta-Sync | Command Center</title>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --glass: rgba(15, 23, 42, 0.75);
+            --border: rgba(255, 255, 255, 0.08);
+        }
+        body {
+            background-color: #020617;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(34, 197, 94, 0.12) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(16, 185, 129, 0.08) 0px, transparent 50%);
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+        }
+        .glass-card {
+            background: var(--glass);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid var(--border);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.6);
+        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .neon-glow {
+            text-shadow: 0 0 15px rgba(74, 222, 128, 0.4);
+        }
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+    </style>
+</head>
+<body class="text-slate-100 antialiased overflow-x-hidden selection:bg-green-500/30">
+
+    <div class="max-w-6xl mx-auto pt-12 pb-24 px-8" hx-ext="ws" ws-connect="/ws">
+        
+        <nav class="flex justify-between items-center mb-12">
+            <div class="flex items-center gap-5">
+                <div class="bg-green-500/10 p-3 rounded-2xl border border-green-500/20 shadow-[0_0_20px_rgba(74,222,128,0.1)]">
+                    <svg class="w-7 h-7 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-extrabold tracking-tighter uppercase neon-glow">Delta-Sync <span class="text-slate-500 font-light italic">Engine</span></h1>
+                    <div class="flex items-center gap-2 text-[10px] text-green-400 font-bold tracking-[0.2em] uppercase mt-1">
+                        <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,1)]"></span>
+                        System Online
+                    </div>
+                </div>
+            </div>
+            
+            <button hx-get="/api/files" hx-target="#file-list" 
+                class="glass-card hover:bg-white/10 hover:border-white/20 text-slate-300 px-6 py-2.5 rounded-xl text-xs font-bold tracking-widest uppercase transition-all active:scale-95 shadow-lg">
+                Refresh Registry
+            </button>
+        </nav>
+
+        <div id="sync-progress" class="mb-10 empty:hidden">
+            </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-10">
+            
+            <aside class="lg:col-span-1 space-y-8">
+                <div class="glass-card rounded-[2rem] p-8">
+                    <h3 class="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-6">Technical Contract</h3>
+                    <ul class="space-y-6">
+                        <li class="group">
+                            <span class="block text-[10px] text-slate-500 mb-1 uppercase tracking-tighter">Hashing</span>
+                            <span class="text-sm font-semibold text-slate-200 mono group-hover:text-green-400 transition-colors">SHA-256</span>
+                        </li>
+                        <li class="group">
+                            <span class="block text-[10px] text-slate-500 mb-1 uppercase tracking-tighter">Transport Layer</span>
+                            <span class="text-sm font-semibold text-slate-200 mono group-hover:text-green-400 transition-colors">gRPC + Proto</span>
+                        </li>
+                        <li class="group">
+                            <span class="block text-[10px] text-slate-500 mb-1 uppercase tracking-tighter">Indexing</span>
+                            <span class="text-sm font-semibold text-slate-200 mono group-hover:text-green-400 transition-colors">PostgreSQL</span>
+                        </li>
+                    </ul>
+                </div>
+                
+                <div class="p-8 border border-white/5 rounded-[2rem] bg-gradient-to-br from-green-500/5 to-transparent">
+                    <p class="text-xs text-slate-400 leading-relaxed italic">
+                        "Variable-sized chunking ensures only modified blocks traverse the network."
+                    </p>
+                </div>
+            </aside>
+
+            <div class="lg:col-span-3">
+                <section class="glass-card rounded-[2.5rem] overflow-hidden">
+                    <div class="px-10 py-8 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
+                        <div>
+                            <h2 class="text-sm font-black tracking-[0.2em] uppercase text-slate-400 mb-1">Global Memory Registry</h2>
+                            <p class="text-[10px] text-slate-500 mono">Synchronized across active nodes</p>
+                        </div>
+                        <span class="px-3 py-1 rounded-full bg-slate-800 text-[9px] text-slate-400 font-bold mono border border-white/5">v1.0.0-MVP</span>
+                    </div>
+
+                    <div id="file-list" hx-get="/api/files" hx-trigger="load" class="p-8 custom-scroll max-h-[600px] overflow-y-auto space-y-4">
+                        <div class="flex flex-col items-center justify-center py-28 opacity-30">
+                            <div class="w-12 h-12 border-2 border-green-500/10 border-t-green-500 rounded-full animate-spin mb-4"></div>
+                            <p class="text-xs tracking-widest uppercase">Fetching Blobs...</p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package sync;
+
+// this defines where the generated Go code will live
+option go_package = "delta-sync-pb/pkg/pb";
+
+service DeltaSync {
+    // client sends a list of hashes; server returns only the ones it DOES NOT have
+    rpc GetMissingChunks (FileSignature) returns (MissingChunksResponse);
+
+    // Clinet streams the actual raw bytes of those missing chunks to the server
+    rpc UploadChunks (stream ChunkPayload) returns (UploadStatus);
+
+    // allows a user to request a file for reconstruction
+    rpc DownloadFile (FileRequest) returns (stream ChunkPayload);
+}
+
+message FileRequest{
+  string file_name = 1;
+}
+
+message FileSignature {
+  string file_id = 1;
+  repeated string chunk_hashes = 2;
+}
+
+message MissingChunksResponse {
+  repeated string missing_hashes = 1;
+}
+
+message ChunkPayload {
+  string hash = 1;
+  bytes data = 2;
+  int32 size = 3;
+}
+
+message UploadStatus {
+  bool success = 1;
+  string message = 2;
+}
+
