@@ -11,7 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 )
@@ -24,7 +26,13 @@ type server struct {
 
 // notifyProgress sends an HTTP POST to the Web Server to update the WebSocket dashboard
 func notifyProgress(fileName string, percent float64) {
-	url := "http://localhost:8080/api/progress"
+	// Use the dynamic port assigned by Render for internal communication
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	url := fmt.Sprintf("http://localhost:%s/api/progress", port)
+	
 	data := map[string]interface{}{
 		"file":    filepath.Base(fileName),
 		"percent": percent,
@@ -66,15 +74,12 @@ func (s *server) GetMissingChunks(ctx context.Context, in *pb.FileSignature) (*p
 
 func (s *server) UploadChunks(stream pb.DeltaSync_UploadChunksServer) error {
 	receivedCount := 0
-	// In a real scenario, you'd send the total count in a metadata header or a 'StartSync' call.
-	// For testing with your current setup, we'll use a placeholder or previous recipe length.
-	totalExpected := 9 
+	// Placeholder: In production, the client should send the total count first
+	totalExpected := 1 
 
 	for {
-		// receive the next chunk from the stream
 		chunk, err := stream.Recv()
 		if err == io.EOF {
-			// Ensure progress reaches 100% on completion
 			notifyProgress("Sync Complete", 100)
 			return stream.SendAndClose(&pb.UploadStatus{
 				Success: true,
@@ -85,11 +90,8 @@ func (s *server) UploadChunks(stream pb.DeltaSync_UploadChunksServer) error {
 			log.Printf("Error receiving chunk: %v", err)
 			return err
 		}
-		
 
-		
-
-		// update PostgreSQL
+		// Register chunk in Neon using the bytes and length
 		err = s.remoteDB.RegisterChunk(chunk.Hash, chunk.Data, len(chunk.Data))
 		if err != nil {
 			log.Printf("Error registering chunk in database: %v", err)
@@ -97,9 +99,8 @@ func (s *server) UploadChunks(stream pb.DeltaSync_UploadChunksServer) error {
 		}
 
 		receivedCount++
-		// Calculate and notify progress
 		percent := (float64(receivedCount) / float64(totalExpected)) * 100
-		notifyProgress("Uploading Chunks...", percent)
+		notifyProgress("Uploading...", percent)
 
 		fmt.Printf("Stored chunk: %s (%d bytes) - %.2f%%\n", chunk.Hash, len(chunk.Data), percent)
 	}
@@ -109,10 +110,8 @@ func (s *server) DownloadFile(in *pb.FileRequest, stream pb.DeltaSync_DownloadFi
 	fmt.Printf("📂 Reconstruction request for file: %s\n", in.FileName)
 
 	var hashes []string
-	// 1. Get the list of hashes (the recipe) from Neon
+	// 1. Get the recipe from Neon using the connection pool
 	query := `SELECT chunk_hashes FROM file_recipes WHERE file_name = $1`
-	
-	// Use .Pool and context as required by pgx
 	err := s.remoteDB.Pool.QueryRow(context.Background(), query, in.FileName).Scan(&hashes)
 	if err != nil {
 		log.Printf("❌ Error fetching recipe from Neon: %v", err)
@@ -122,11 +121,11 @@ func (s *server) DownloadFile(in *pb.FileRequest, stream pb.DeltaSync_DownloadFi
 	for _, hash := range hashes {
 		var chunkData []byte
 		
-		// 2. Fetch the actual binary data from the chunks table
+		// 2. Fetch binary data from the chunks table
 		chunkQuery := `SELECT data FROM chunks WHERE hash = $1`
 		err := s.remoteDB.Pool.QueryRow(context.Background(), chunkQuery, hash).Scan(&chunkData)
 		if err != nil {
-			log.Printf("❌ Error fetching chunk %s from Neon: %v", hash, err)
+			log.Printf("❌ Error fetching chunk %s: %v", hash, err)
 			return err
 		}
 
@@ -146,20 +145,26 @@ func (s *server) DownloadFile(in *pb.FileRequest, stream pb.DeltaSync_DownloadFi
 }
 
 func main() {
-	// Initialize PostgreSQL connection
+	// Initialize PostgreSQL connection (reads from DATABASE_URL_DELTASYNC)
 	remoteDB := db.InitPostgres()
-	fmt.Println("Connected to PostgreSQL database successfully! (deltasync_db)")
+	fmt.Println("🚀 Success! Server is connected to Neon.")
 
-	lis, err := net.Listen("tcp", ":50051")
+	// Dynamically bind to the port assigned by Render
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080" // Fallback for local testing
+	}
+
+	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("failed to listen on port %s: %v", port, err)
 	}
 
 	s := grpc.NewServer()
 	pb.RegisterDeltaSyncServer(s, &server{remoteDB: remoteDB})
 	reflection.Register(s)
 
-	fmt.Println(" Delta-Sync server is active on port :50051")
+	fmt.Printf("📡 Delta-Sync gRPC server active on port %s\n", port)
 
 	if err := s.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)

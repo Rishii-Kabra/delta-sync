@@ -15,29 +15,27 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 )
 
 func main() {
-	// 1. Capture the file path via command line argument
-	// Example: go run cmd/client/main.go -file="C:\path\to\your\file.txt"
+	// 1. Capture the file path and server address via command line flags
 	filePath := flag.String("file", "", "The full path of the file you want to sync")
-	serverAddr := flag.String("server", "localhost:50051", "Server address (e.g. shaggy-pets-run.loca.lt)")
+	// Updated default to your Render URL
+	serverAddr := flag.String("server", "delta-sync-dashboard.onrender.com:443", "Server address")
 	flag.Parse()
 
-	// Validate that a path was provided
 	if *filePath == "" {
 		fmt.Println("❌ Usage error: You must specify a file to watch.")
 		fmt.Println("Usage: go run cmd/client/main.go -file=\"your_file_path_here\"")
 		os.Exit(1)
 	}
 
-	// Verify the file exists on the local system
 	if _, err := os.Stat(*filePath); os.IsNotExist(err) {
 		log.Fatalf("❌ Error: The file %s does not exist.", *filePath)
 	}
 
-	// 2. Setup fsnotify Watcher for real-time monitoring
+	// 2. Setup fsnotify Watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
@@ -52,7 +50,6 @@ func main() {
 				if !ok {
 					return
 				}
-				// Trigger sync only on Write events per technical contract
 				if event.Op&fsnotify.Write == fsnotify.Write {
 					fmt.Printf("📝 Changes detected in: %s. Initiating Delta-Sync...\n", event.Name)
 					performSync(*filePath, *serverAddr)
@@ -66,7 +63,6 @@ func main() {
 		}
 	}()
 
-	// Add the user-specified file to the watcher
 	err = watcher.Add(*filePath)
 	if err != nil {
 		log.Fatal(err)
@@ -75,20 +71,15 @@ func main() {
 	fmt.Printf("👁️  Delta-Sync Watcher active on: %s\n", *filePath)
 	fmt.Printf("🔗 Connecting to server: %s\n", *serverAddr)
 	
-	// Perform initial sync on startup to catch up with server state
 	performSync(*filePath, *serverAddr)
 
-	// Block main goroutine to keep watcher alive
 	select {}
 }
 
-// performSync handles the chunking, fingerprinting, and gRPC upload
 func performSync(filePath string, addr string) {
-	// Initialize local SQLite for indexing as per contract
 	localDB := db.InitSQLite("client_metadata.db")
 	defer localDB.Conn.Close()
 
-	// 1. Chunking and Hashing (SHA-256)
 	chunks, err := chunker.AnalyzeFileVSC(filePath)
 	if err != nil {
 		log.Printf("Analysis failed: %v", err)
@@ -100,11 +91,12 @@ func performSync(filePath string, addr string) {
 		hashList = append(hashList, c.Hash)
 	}
 
-	// 2. Update local SQLite index
 	localDB.SaveFileIndex(filePath, strings.Join(hashList, ","))
 
-	// 3. Establish gRPC Transport connection
-	conn, err := grpc.Dial("delta-sync-dashboard.onrender.com:443", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	// 4. Establish SECURE gRPC Transport connection
+	// Using system certs to allow connection to Render's HTTPS/TLS endpoint
+	creds := credentials.NewClientTLSFromCert(nil, "") 
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		log.Printf("Connection failed: %v", err)
 		return
@@ -112,10 +104,10 @@ func performSync(filePath string, addr string) {
 	defer conn.Close()
 	client := pb.NewDeltaSyncClient(conn)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Increased timeout to 30s to account for potential Render "Cold Start"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// 4. The "Diff": Identify missing chunks on server
 	resp, err := client.GetMissingChunks(ctx, &pb.FileSignature{
 		FileId:      filePath,
 		ChunkHashes: hashList,
@@ -125,7 +117,6 @@ func performSync(filePath string, addr string) {
 		return
 	}
 
-	// 5. Reconstruction: Stream only missing bytes to server
 	if len(resp.MissingHashes) > 0 {
 		fmt.Printf("📤 Syncing %d new/modified chunks...\n", len(resp.MissingHashes))
 		stream, err := client.UploadChunks(context.Background())
@@ -148,9 +139,10 @@ func performSync(filePath string, addr string) {
 	}
 }
 
-// downloadFromServer provides manual reconstruction logic
-func downloadFromServer(targetFileName string, savePath string) {
-	conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+func downloadFromServer(targetFileName string, savePath string, addr string) {
+	// Using secure credentials here as well
+	creds := credentials.NewClientTLSFromCert(nil, "")
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		log.Printf("Connection failed: %v", err)
 		return

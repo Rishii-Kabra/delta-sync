@@ -7,50 +7,49 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"os"
+	"path/filepath"
 
+	"github.com/gorilla/websocket"
 	"github.com/labstack/echo/v4"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"github.com/gorilla/websocket"
 )
 
 var (
-    upgrader = websocket.Upgrader{
-        CheckOrigin: func(r *http.Request) bool { return true },
-    }
-    // Simple way to track connected dashboard clients
-    clients = make(map[*websocket.Conn]bool)
+	upgrader = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true },
+	}
+	// Simple way to track connected dashboard clients
+	clients = make(map[*websocket.Conn]bool)
 )
 
 func main() {
-	// 1. Initialize PostgreSQL connection for the Web Dashboard
-	// Using your defined credentials: admin123 on deltasync_db
+	// 1. Initialize PostgreSQL connection (reads from DATABASE_URL_DELTASYNC)
 	remoteDB := db.InitPostgres()
-	fmt.Println("🌐 Web Dashboard connected to PostgreSQL (deltasync_db)")
+	fmt.Println("🌐 Web Dashboard connected to Neon PostgreSQL")
 
 	e := echo.New()
 
 	// 2. Serve the static HTML file
 	e.GET("/", func(c echo.Context) error {
+		// Ensure this path matches your Dockerfile COPY instruction
 		return c.File("web/index.html")
 	})
 
-	// 3. Updated API for HTMX injection
+	// 3. API for HTMX injection
 	e.GET("/api/files", func(c echo.Context) error {
-    files, err := remoteDB.GetAllRecipes()
-    if err != nil {
-        return c.String(http.StatusInternalServerError, "Failed to load registry")
-    }
+		files, err := remoteDB.GetAllRecipes()
+		if err != nil {
+			return c.String(http.StatusInternalServerError, "Failed to load registry")
+		}
 
-    html := ""
-    for _, f := range files {
-        displayName := filepath.Base(f.Name)
-        // Format time to show a nice timestamp
-        timeLabel := f.UpdatedAt.Format("Jan 02, 15:04")
+		html := ""
+		for _, f := range files {
+			displayName := filepath.Base(f.Name)
+			timeLabel := f.UpdatedAt.Format("Jan 02, 15:04")
 
-        html += fmt.Sprintf(`
+			html += fmt.Sprintf(`
             <div class="group flex items-center justify-between p-6 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-green-500/40 hover:bg-green-500/[0.03] transition-all duration-500">
                 <div class="flex items-center gap-5">
                     <div class="w-12 h-12 rounded-xl bg-slate-800/50 flex items-center justify-center group-hover:bg-green-500/10 transition-all border border-white/5 group-hover:border-green-500/20">
@@ -73,40 +72,43 @@ func main() {
                     </a>
                 </div>
             </div>`, displayName, timeLabel, f.Name)
-    }
+		}
 
-    if html == "" {
-        html = `<div class="text-center py-20 text-slate-600 text-xs tracking-widest uppercase italic">Registry Empty.</div>`
-    }
+		if html == "" {
+			html = `<div class="text-center py-20 text-slate-600 text-xs tracking-widest uppercase italic">Registry Empty.</div>`
+		}
 
-    return c.HTML(http.StatusOK, html)
-})
+		return c.HTML(http.StatusOK, html)
+	})
 
-	// 4. Download Route: Bridges HTTP to gRPC
+	// 4. Download Route: Bridges HTTP to gRPC internally
 	e.GET("/download", func(c echo.Context) error {
 		fileName := c.QueryParam("file")
 		
-		// Establish gRPC connection to the server
-		conn, err := grpc.Dial("localhost:50051", grpc.WithTransportCredentials(insecure.NewCredentials()))
+		// Use the internal Render port for local gRPC communication
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8080"
+		}
+		
+		// Internal gRPC calls within the same container use insecure credentials
+		conn, err := grpc.Dial("localhost:"+port, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			return c.String(http.StatusInternalServerError, "Could not connect to Delta-Sync gRPC server")
+			return c.String(http.StatusInternalServerError, "Could not connect to internal gRPC server")
 		}
 		defer conn.Close()
 		client := pb.NewDeltaSyncClient(conn)
 
-		// Request the reconstruction stream
 		stream, err := client.DownloadFile(context.Background(), &pb.FileRequest{FileName: fileName})
 		if err != nil {
-			return c.String(http.StatusNotFound, "File recipe not found in PostgreSQL")
+			return c.String(http.StatusNotFound, "File recipe not found")
 		}
 
-		// Set headers for browser-side file reconstruction
 		downloadName := filepath.Base(fileName)
 		c.Response().Header().Set(echo.HeaderContentDisposition, fmt.Sprintf("attachment; filename=%s", downloadName))
 		c.Response().Header().Set(echo.HeaderContentType, "application/octet-stream")
 		c.Response().WriteHeader(http.StatusOK)
 
-		// Stream bytes from gRPC server to the browser
 		for {
 			chunk, err := stream.Recv()
 			if err == io.EOF {
@@ -120,34 +122,32 @@ func main() {
 		return nil
 	})
 
-	// WebSocket endpoint for the dashboard
-    e.GET("/ws", func(c echo.Context) error {
-        ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
-        if err != nil {
-            return err
-        }
-        defer ws.Close()
-        clients[ws] = true
-        
-        // Keep connection alive
-        for {
-            if _, _, err := ws.ReadMessage(); err != nil {
-                delete(clients, ws)
-                break
-            }
-        }
-        return nil
-    })
+	// WebSocket endpoint
+	e.GET("/ws", func(c echo.Context) error {
+		ws, err := upgrader.Upgrade(c.Response(), c.Request(), nil)
+		if err != nil {
+			return err
+		}
+		defer ws.Close()
+		clients[ws] = true
+		
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				delete(clients, ws)
+				break
+			}
+		}
+		return nil
+	})
 
-    // Internal endpoint for the gRPC server to post progress updates
-    e.POST("/api/progress", func(c echo.Context) error {
-        var data map[string]interface{}
-        if err := c.Bind(&data); err != nil {
-            return err
-        }
+	// Internal endpoint for progress updates
+	e.POST("/api/progress", func(c echo.Context) error {
+		var data map[string]interface{}
+		if err := c.Bind(&data); err != nil {
+			return err
+		}
 
-        // Broadcast progress HTML to all connected dashboard clients via HTMX WebSocket extension
-        progressHTML := fmt.Sprintf(`
+		progressHTML := fmt.Sprintf(`
             <div id="sync-progress" hx-swap-oob="true" class="mb-4 p-4 bg-blue-900 border border-blue-700 rounded-md">
                 <p class="text-xs font-bold text-blue-300 mb-1">SYNCING: %s</p>
                 <div class="w-full bg-gray-700 rounded-full h-2">
@@ -155,16 +155,16 @@ func main() {
                 </div>
             </div>`, data["file"], data["percent"])
 
-        for client := range clients {
-            client.WriteMessage(websocket.TextMessage, []byte(progressHTML))
-        }
-        return c.NoContent(http.StatusOK)
-    })
+		for client := range clients {
+			client.WriteMessage(websocket.TextMessage, []byte(progressHTML))
+		}
+		return c.NoContent(http.StatusOK)
+	})
 
-	// 5. Start the Web Server
+	// 5. Start the Web Server on the assigned Render port
 	port := os.Getenv("PORT")
 	if port == "" {
-    	port = "8080"
+		port = "8080"
 	}
 	e.Logger.Fatal(e.Start(":" + port))
 }
