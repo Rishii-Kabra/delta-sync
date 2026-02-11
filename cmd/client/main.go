@@ -22,7 +22,7 @@ func main() {
 	// 1. Capture the file path and server address via command line flags
 	filePath := flag.String("file", "", "The full path of the file you want to sync")
 	// Updated default to your Render URL
-	serverAddr := flag.String("server", "https://delta-sync-production.up.railway.app", "Server address")
+	serverAddr := flag.String("server", "delta-sync-production.up.railway.app:443", "Server address")
 	flag.Parse()
 
 	if *filePath == "" {
