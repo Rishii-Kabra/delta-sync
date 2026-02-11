@@ -104,7 +104,7 @@ func performSync(filePath string, addr string) {
 	localDB.SaveFileIndex(filePath, strings.Join(hashList, ","))
 
 	// 3. Establish gRPC Transport connection
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.Dial("delta-sync-dashboard.onrender.com:443", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		log.Printf("Connection failed: %v", err)
 		return
