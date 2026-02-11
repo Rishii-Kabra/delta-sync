@@ -4,7 +4,7 @@ WORKDIR /app
 COPY . .
 RUN go mod download
 # Build the combined server (or specific web server)
-RUN go build -o main ./cmd/combined/main.go 
+RUN go build -o main ./cmd/web/main.go 
 
 # Step 2: Final lightweight image
 FROM alpine:latest

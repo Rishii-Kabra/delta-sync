@@ -22,7 +22,7 @@ func main() {
 	// 1. Capture the file path and server address via command line flags
 	filePath := flag.String("file", "", "The full path of the file you want to sync")
 	// Updated default to your Render URL
-	serverAddr := flag.String("server", "delta-sync-dashboard.onrender.com:443", "Server address")
+	serverAddr := flag.String("server", "https://delta-sync-production.up.railway.app", "Server address")
 	flag.Parse()
 
 	if *filePath == "" {
@@ -95,6 +95,7 @@ func performSync(filePath string, addr string) {
 
 	// 4. Establish SECURE gRPC Transport connection
 	// Using system certs to allow connection to Render's HTTPS/TLS endpoint
+
 	creds := credentials.NewClientTLSFromCert(nil, "") 
 	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
